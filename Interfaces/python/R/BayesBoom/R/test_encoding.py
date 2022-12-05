@@ -2,6 +2,7 @@ import unittest
 import BayesBoom.R as R
 import numpy as np
 import pandas as pd
+import json
 
 
 class TestEffectEncoder(unittest.TestCase):
@@ -53,6 +54,121 @@ class TestEffectEncoder(unittest.TestCase):
             [-1.0, -1.0]])
         self.assertTrue(np.allclose(enc, expected))
 
+    def test_json(self):
+        encoder = R.EffectEncoder("Color", ["Red", "Blue", "Green"])
+        data = ["Red", "Blue", "Orange", np.NaN, 17, "Green"]
+        enc = encoder.encode(data)
+#         json_encoder = R.MainEffectEncoderJsonEncoder()
+        json_string = json.dumps(encoder,
+                                 cls=R.MainEffectEncoderJsonEncoder)
+        encoder2 = json.loads(json_string, cls=R.MainEffectEncoderJsonDecoder)
+        enc2 = encoder2.encode(data)
+        self.assertTrue(np.allclose(enc, enc2))
+
+
+class TestOneHotEncoder(unittest.TestCase):
+    def setUp(self):
+        np.random.seed(8675309)
+
+    def test_encoding(self):
+        levels = ["Red", "Blue", "Green"]
+        encoder = R.OneHotEncoder("blah", levels, baseline_level="Green")
+        self.assertEqual(2, encoder.dim)
+        x = ["Red", "Red", "Green", "Blue"]
+        X = encoder.encode(x)
+        self.assertEqual((4, 2), X.shape)
+        expected = np.array([
+            [1.0, 0.0],
+            [1.0, 0.0],
+            [0.0, 0.0],
+            [0.0, 1.0]
+        ])
+        self.assertTrue(np.allclose(X, expected))
+
+    def test_json(self):
+        levels = ["Red", "Blue", "Green"]
+        encoder = R.OneHotEncoder("blah", levels, baseline_level="Green")
+        data = ["Red", "Red", "Green", "Blue"]
+        output = encoder.encode(data)
+
+        json_string = json.dumps(encoder, cls=R.MainEffectEncoderJsonEncoder)
+        encoder2 = json.loads(json_string, cls=R.MainEffectEncoderJsonDecoder)
+        self.assertTrue(np.allclose(output, encoder2.encode(data)))
+
+
+class TestIdentityEncoder(unittest.TestCase):
+    def setUp(self):
+        np.random.seed(8675309)
+
+    def test_everything(self):
+        encoder = R.IdentityEncoder("Blah")
+        self.assertEqual(encoder.variable_name, "Blah")
+        x = np.random.randn(4)
+        output = encoder.encode(x)
+        self.assertEqual(output.shape, (4, 1))
+        self.assertTrue(np.allclose(output.ravel(), x))
+
+        json_string = json.dumps(encoder, cls=R.MainEffectEncoderJsonEncoder)
+        encoder2 = json.loads(json_string, cls=R.MainEffectEncoderJsonDecoder)
+        self.assertTrue(np.allclose(output, encoder2.encode(x)))
+
+
+class TestMissingDummyEncoder(unittest.TestCase):
+    def setUp(self):
+        np.random.seed(8675309)
+
+    def test_numeric(self):
+        base = R.IdentityEncoder("Blah")
+        encoder = R.MissingDummyEncoder(base)
+        self.assertEqual(encoder.variable_name, "Blah")
+
+        x = np.array([1, 2, np.NaN, 3])
+        foo = encoder.encode(x)
+        self.assertEqual(foo.shape, (4, 2))
+        self.assertTrue(np.allclose(foo[:, 0], np.array([0, 0, 1, 0])))
+        self.assertTrue(np.allclose(foo[:, 1], np.array([1, 2, 0, 3])))
+
+        y = np.array([1, 2, 3])
+        bar = encoder.encode(y)
+        self.assertEqual(bar.shape, (3, 2))
+        self.assertTrue(np.allclose(bar[:, 0], np.array([0, 0, 0])))
+        self.assertTrue(np.allclose(bar[:, 1], np.array([1, 2, 3])))
+
+    def test_categorical(self):
+        base = R.EffectEncoder("Stooges", ["Larry", "Moe", "Curly"])
+        encoder = R.MissingDummyEncoder(base)
+        x = np.array(["Larry", "Curly", np.NaN, "Moe"], dtype=object)
+        foo = encoder.encode(x)
+        self.assertEqual(foo.shape, (4, 3))
+        self.assertTrue(np.allclose(
+            foo,
+            np.array([[0, 1, 0],
+                      [0, -1, -1],
+                      [1, 0, 0],
+                      [0, 0, 1]])))
+
+
+class TestSuccessEncoder(unittest.TestCase):
+    def setUp(self):
+        np.random.seed(8675309)
+
+    def test_encoding(self):
+        encoder = R.SuccessEncoder("Blah", ["A", "C"])
+        data = ["A", "B", "C", "D"]
+        enc = encoder.encode(data)
+        self.assertEqual(enc.shape, (4, 1))
+        self.assertTrue(np.allclose(
+            enc.ravel(), np.array([1, 0, 1, 0])))
+
+    def test_json(self):
+        encoder = R.SuccessEncoder("Blah", ["A", "C"])
+        data = ["A", "B", "C", "D"]
+        enc = encoder.encode(data)
+
+        json_string = json.dumps(encoder, cls=R.MainEffectEncoderJsonEncoder)
+        encoder2 = json.loads(json_string, cls=R.MainEffectEncoderJsonDecoder)
+        self.assertTrue(np.allclose(enc, encoder2.encode(data)))
+
 
 class TestDatasetEncoder(unittest.TestCase):
     def setUp(self):
@@ -83,6 +199,10 @@ class TestDatasetEncoder(unittest.TestCase):
         self.assertEqual(4, enc.shape[1])
         self.assertTrue(np.allclose(enc[:, 2], data.iloc[:, 0]))
 
+        json_string = json.dumps(encoder, cls=R.DatasetEncoderJsonEncoder)
+        encoder2 = json.loads(json_string, cls=R.DatasetEncoderJsonDecoder)
+        self.assertTrue(np.allclose(enc, encoder2.encode_dataset(data)))
+
 
 _debug_mode = False
 
@@ -103,7 +223,6 @@ if _debug_mode:
     if hasattr(rig, "setUp"):
         rig.setUp()
 
-    rig.test_init()
     rig.test_encoding()
 
     print("Goodbye, cruel world!")
